@@ -1,0 +1,35 @@
+{
+  "name": "ptat",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build --webpack",
+    "start": "next start --hostname 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:http": "node tests/http-smoke.mjs",
+    "test:e2e": "node tests/browser-smoke.mjs",
+    "format": "prettier --write app components lib tests docs README.md next.config.ts tsconfig.json package.json .github",
+    "format:check": "prettier --check app components lib tests docs README.md next.config.ts tsconfig.json package.json .github"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^16.3.8",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "playwright": "^1.63.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

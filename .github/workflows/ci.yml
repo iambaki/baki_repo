@@ -1,0 +1,20 @@
+name: PTAT checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+        env:
+          PTAT_DEMO_PASSWORD: ci-only-disposable-identity
+          PTAT_DATA_DIR: ${{ runner.temp }}/ptat-build
+          NEXT_TELEMETRY_DISABLED: "1"
+      - run: npm run typecheck
+      - run: npm run format:check

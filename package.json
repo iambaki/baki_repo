@@ -1,23 +1,29 @@
 {
   "name": "ptat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "node scripts/portal.mjs dev",
     "build": "next build --webpack",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "node scripts/portal.mjs start",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:http": "node tests/http-smoke.mjs",
     "test:e2e": "node tests/browser-smoke.mjs",
-    "format": "prettier --write app components lib tests docs README.md next.config.ts tsconfig.json package.json .github",
-    "format:check": "prettier --check app components lib tests docs README.md next.config.ts tsconfig.json package.json .github"
+    "test:enterprise": "node tests/enterprise-http.mjs",
+    "test:enterprise:e2e": "node tests/enterprise-browser.mjs",
+    "test:proxy": "node tests/live-proxy.mjs",
+    "format": "prettier --write app components lib tests docs scripts server README.md next.config.ts tsconfig.json package.json .github compose.yaml",
+    "format:check": "prettier --check app components lib tests docs scripts server README.md next.config.ts tsconfig.json package.json .github compose.yaml"
   },
   "dependencies": {
+    "dotenv": "^18.0.7",
     "lucide-react": "^0.468.0",
+    "mysql2": "^3.24.6",
     "next": "^16.3.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "undici": "^8.12.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {

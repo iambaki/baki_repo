@@ -1,60 +1,47 @@
-# PTAT — Product Testing & Automation Toolkit
+# PTAT — BSS API Testing & Verification Portal
 
-A runnable foundation for a business BSS UAT portal. This release deliberately uses a **simulated BSS adapter** and synthetic products/subscribers. It makes no external telecom calls and is not approved for production or real subscriber testing.
+A configurable Next.js/TypeScript portal for business BSS testing, with MySQL persistence, approved API operations, subscriber sharing, batch product/offer/DA verification, Subscriber 360 and a controlled assistant.
 
-## Run
+**Start here:** [Laptop setup and testing](docs/local-testing.md). Download the GitHub ZIP, extract it, open the folder containing `package.json`, and follow the Windows steps. No Git installation is required.
 
-Requires Node.js 24+ (SQLite uses `node:sqlite`).
+## Quick start
 
-```sh
-cd /workspace/baki_repo
-npm ci --cache /workspace/.npm-cache
-npm run dev
-```
+Requires Node.js 24+ and MySQL 8.4 (or Docker Desktop for MySQL).
 
-Open port 3000 in your development environment. Accounts:
+1. Copy `.env.example` to `.env`; fill `MYSQL_PASSWORD`, `PTAT_ADMIN_PASSWORD`, and `MYSQL_ROOT_PASSWORD` when using Docker.
+2. Run `docker compose up -d mysql`, or configure an existing MySQL database/user.
+3. Run `npm ci` and `npm run dev`.
+4. Open port 3000 and sign in as `admin@ptat.local` with your initial `PTAT_ADMIN_PASSWORD`.
 
-| Role      | Email              | Scope                                            |
-| --------- | ------------------ | ------------------------------------------------ |
-| Test Lead | lead@ptat.local    | Own subscribers; view workspace runs and audit   |
-| Tester    | tester@ptat.local  | Own subscribers, runs and audit                  |
-| Auditor   | auditor@ptat.local | Read workspace results and reports; no execution |
+An explicit local-only SQLite compatibility option is available with `PTAT_DB_DRIVER=sqlite`. Existing password hashes and data are preserved during additive MySQL migration. Keep your original `.data/ptat.sqlite`; do not delete it to upgrade. Default demonstration accounts (`lead@ptat.local`, `tester@ptat.local`, `auditor@ptat.local`) remain available. In development only, unset initial password variables fall back to `UatDemo!2026`. Existing passwords are never silently changed by editing environment variables.
 
-Development-only initial password: `UatDemo!2026`. Set `PTAT_DEMO_PASSWORD` **before first startup** to override it. Existing password hashes are retained: changing the variable does not change an already-created account. Production-mode startup requires this variable, but does not make this demo suitable for enterprise production.
+## Delivered capabilities
 
-## Working workflows
+- Configurable Test and Production environments; same-origin BSS proxy, HTTPS, per-environment certificate verification/bypass, CA file, credentials by environment-variable reference, timeouts and write controls.
+- Registered API forms with parameters, filters and bodies; direct relative paths; configurable business-view columns and raw evidence.
+- MySQL accounts, sessions, custom roles, per-page and read/write/delete permissions, account approval, admin-created users, password changes and administrator-issued one-time reset tokens without email.
+- MSISDN names, subscription/contract IDs, owners, assigned users, enabled/approval state and remarks. Owners and admins can share registrations; central settings govern sharing and Production approval.
+- Bundle CSV/text verification for all expected products, offers and DA units, with OK/NOT OK, missing/mismatched detail, saved reports and evidence exports.
+- Subscriber 360 with a left summary and detail tabs; product-specific explorer; comma-separated Batch Report inputs.
+- Business/admin assistant plans using the same authorization and execution services. Offline rules mode is usable immediately; an optional approved OpenAI-compatible model endpoint can generate validated plans. Changes require explicit confirmation; credentials are collected separately.
+- Original simulated purchase scenarios, seven-entitlement comparisons, dashboards and CSV exports retained.
+- Configurable port and project-relative startup configuration independent of the calling directory.
 
-- Login: salted scrypt hashes, opaque eight-hour HTTP-only sessions, failed-login throttling, same-origin mutation checks.
-- Dashboard, product expectations, documented API registry, local audit and environment controls.
-- Register test MSISDNs and enforce active status, ownership, environment, and registered products server-side.
-- Structured plans and deterministic business prompt parsing; both require plan review and explicit execution.
-- CSV/text batch import selecting existing owned subscribers (50 max). Import is validated all-or-nothing. XLSX is not implemented.
-- Purchase → simulated scheduled request → completion → seven entitlement comparisons → PASS/FAIL/ERROR/PARTIAL.
-- Deliberate balance mismatch and purchase-error scenarios demonstrate failure detection.
-- Persisted masked API evidence, per-subscriber results, and CSV export (with spreadsheet formula escaping).
-- Transactional one-time execution; no automatic purchase retries.
+## What is simulated
 
-Data lives in ignored `.data/ptat.sqlite` (WAL files included). Set `PTAT_DATA_DIR` to relocate it. Each simulated run begins with a fresh balance of 1,000 BDT; it does not modify a real or shared subscriber balance. Restricted number `01900000005` must be rejected. Test Lead owns 001–003, Tester owns 004. The synthetic prefix does not imply a real operator assignment.
+As requested, BSS URLs are dummy `.invalid` placeholders. Test defaults to simulator mode and Production starts disabled. Simulated offer/DA association fields are configurable mappings, not assertions about deployed BSS schemas. The current registered API subset follows the uploaded 2019 Qvantel document; deployment-specific endpoints such as devices remain explicitly unavailable until configured.
 
-## Validate
+Do not treat a successful simulated run as proof of live telecom integration. Real endpoints, authentication, response mappings and charging semantics need validation against the actual UAT deployment. AD/SSO is intentionally omitted for now. Distributed workers, HA, campaigns/maker-checker, tamper-proof audit and PDF/XLSX reports are future extensions.
+
+## Checks
 
 ```sh
 npm test
+npm run build
 npm run typecheck
-# Supply a non-default password for the production-mode build/runtime.
-PTAT_DEMO_PASSWORD='<your local secret>' npm run build
-# With a dev or production server running:
-node tests/http-smoke.mjs
+npm run format:check
 ```
 
-Smoke tests create persisted test runs and audit events. Use a separate `PTAT_DATA_DIR` when testing clean-room startup. Configure `PTAT_SECURE_COOKIES=true` when served over HTTPS; HTTP-only local development requires it false. No secret belongs in Git or in a build artifact.
+With a test portal running: `npm run test:http`, `npm run test:enterprise`, `npm run test:e2e`, and `npm run test:enterprise:e2e`. Set `PTAT_TEST_URL` to its address and `PTAT_CHROMIUM_PATH` to an installed Chromium executable if required. Integration tests create clearly identified fixtures; use an isolated test database.
 
-## Architecture and limits
-
-Next.js + React + TypeScript provides the UI and backend routes in this initial runnable vertical slice. The engine is independent of HTTP; the approved-operation registry and contract notes define the future BSS adapter boundary. SQLite is local development persistence. See [architecture](docs/architecture.md), [BSS contract notes](docs/bss-contract.md), and [security and deployment](docs/security.md).
-
-NestJS services, MySQL migrations, Redis jobs, actual LLM integration, SSO, secret manager, PDF/XLSX reporting, campaigns, maker-checker approvals, immutable audit storage, and live BSS adapters are **not yet implemented**. A seven-phase enterprise product cannot responsibly be labeled complete from this foundation. These are the next implementation milestones.
-
-Browser validation (Chromium required): `npm run test:e2e`. Set `PTAT_CHROMIUM_PATH` if Chromium is not at `/usr/bin/chromium`. `npm run test:http` verifies the authenticated HTTP contract. Both default to port 3000 and honor `PTAT_TEST_URL` and `PTAT_DEMO_PASSWORD`. Screenshots are written outside the repository to `/tmp/ptat-evidence`.
-
-Behind HTTPS ingress set `PTAT_PUBLIC_ORIGIN` to the exact public origin (for example `https://ptat.company.example`) along with secure cookies. The public origin is a non-secret configuration value; it must match the browser's Origin header.
+See the [requirement cross-check](docs/requirements-matrix.md), [BSS contract notes](docs/bss-contract.md), [architecture](docs/architecture.md), [deployment/security notes](docs/security.md), and [validation evidence](docs/validation.md).

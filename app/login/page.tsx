@@ -2,6 +2,12 @@
 import { useState } from "react";
 import { ArrowRight, ShieldCheck, Layers3, FlaskConical } from "lucide-react";
 export default function Login() {
+  const [mode, setMode] = useState<"login" | "register" | "recover" | "reset">(
+    "login",
+  );
+  const [name, setName] = useState("");
+  const [token, setToken] = useState("");
+  const [message, setMessage] = useState("");
   const [email, setEmail] = useState("lead@ptat.local");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -39,27 +45,70 @@ export default function Login() {
             </span>
           </div>
         </div>
-        <small>Product Testing & Automation Toolkit · v0.1</small>
+        <small>Product Testing & Automation Toolkit · v0.2</small>
       </section>
       <section className="login-form">
         <div className="login-card">
-          <span className="badge amber">SIMULATED UAT</span>
-          <h2>Welcome to your workspace</h2>
+          <span className="badge amber">BSS TESTING PORTAL</span>
+          <h2>
+            {mode === "login"
+              ? "Welcome to your workspace"
+              : mode === "register"
+                ? "Request a portal account"
+                : mode === "recover"
+                  ? "Request password recovery"
+                  : "Reset your password"}
+          </h2>
           <p className="muted">Sign in to plan your next test campaign.</p>
+          <div className="tabs wrap">
+            {(["login", "register", "recover", "reset"] as const).map((m) => (
+              <button
+                key={m}
+                className={mode === m ? "selected" : ""}
+                onClick={() => {
+                  setMode(m);
+                  setError("");
+                  setMessage("");
+                  setPassword("");
+                }}
+              >
+                {m === "login"
+                  ? "Sign in"
+                  : m === "register"
+                    ? "Register"
+                    : m === "recover"
+                      ? "Recover account"
+                      : "Reset password"}
+              </button>
+            ))}
+          </div>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
               setBusy(true);
               setError("");
               try {
-                const r = await fetch("/api/auth/login", {
+                const r = await fetch("/api/auth/" + mode, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ email, password }),
+                  body: JSON.stringify(
+                    mode === "register"
+                      ? { name, email, password }
+                      : mode === "recover"
+                        ? { email }
+                        : mode === "reset"
+                          ? { email, token, password }
+                          : { email, password },
+                  ),
                 });
                 const data = await r.json();
                 if (!r.ok) throw new Error(data.error);
-                window.location.href = "/";
+                if (mode === "login") window.location.href = "/";
+                else {
+                  setMessage(data.message);
+                  setPassword("");
+                  setToken("");
+                }
               } catch (e) {
                 setError((e as Error).message);
               } finally {
@@ -67,6 +116,29 @@ export default function Login() {
               }
             }}
           >
+            {mode === "register" && (
+              <label>
+                Full name
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  maxLength={100}
+                />
+              </label>
+            )}
+            {mode === "reset" && (
+              <label>
+                Administrator-issued reset token
+                <input
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  required
+                  minLength={64}
+                  maxLength={64}
+                />
+              </label>
+            )}
             <label>
               Email address
               <input
@@ -76,29 +148,47 @@ export default function Login() {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </label>
-            <label>
-              Password
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
-              />
-            </label>
+            {mode !== "recover" && (
+              <label>
+                Password
+                <input
+                  type="password"
+                  required
+                  minLength={mode === "login" ? 1 : 10}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                />
+              </label>
+            )}
             {error && (
               <div role="alert" className="error">
                 {error}
               </div>
             )}
+            {message && (
+              <p role="status" className="success-text">
+                {message}
+              </p>
+            )}
             <button className="button primary full" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in to PTAT"}
+              {busy
+                ? "Submitting…"
+                : mode === "login"
+                  ? "Sign in to PTAT"
+                  : mode === "register"
+                    ? "Submit registration"
+                    : mode === "recover"
+                      ? "Request administrator reset"
+                      : "Set new password"}
               <ArrowRight size={17} />
             </button>
           </form>
           <div className="demo-note">
             <b>Local demonstration accounts</b>
             <p>
+              Admin: admin@ptat.local
+              <br />
               Test Lead: lead@ptat.local
               <br />
               Tester: tester@ptat.local
@@ -107,10 +197,13 @@ export default function Login() {
             </p>
             <p>
               Development password: <code>UatDemo!2026</code>
-              <br />A configured PTAT_DEMO_PASSWORD overrides this default.
+              <br />
+              Initial passwords use PTAT_ADMIN_PASSWORD (or legacy
+              PTAT_DEMO_PASSWORD) when configured.
             </p>
             <small>
-              Uses simulated subscribers and BSS responses. No live purchases.
+              Test starts in simulator mode. Administrators control live
+              connectivity.
             </small>
           </div>
         </div>

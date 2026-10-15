@@ -80,7 +80,9 @@ try {
   await page
     .getByRole("heading", { name: "Test MSISDNs", exact: true })
     .waitFor();
-  assert.ok(await page.getByText("01900000005", { exact: true }).isVisible());
+  assert.ok(
+    await page.getByText("01900000005", { exact: true }).first().isVisible(),
+  );
   await page
     .getByRole("button", { name: "Product catalog", exact: true })
     .click();

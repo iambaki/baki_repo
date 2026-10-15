@@ -1,5 +1,12 @@
-export type Role = "Test Lead" | "Tester" | "Auditor";
-export type User = { id: string; name: string; email: string; role: Role };
+export type Role = string;
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  roleName?: string;
+  status?: "pending" | "active" | "rejected" | "disabled";
+};
 export type Product = {
   id: string;
   name: string;
@@ -15,9 +22,16 @@ export type Subscriber = {
   id: string;
   msisdn: string;
   owner: string;
-  environment: "UAT";
+  environment: "UAT" | "Test" | "Production";
   status: "Active" | "Restricted";
   tags: string[];
+  name?: string;
+  subscriptionId?: string;
+  contractId?: string;
+  assignedUsers?: string[];
+  enabled?: boolean;
+  approval?: "pending" | "approved" | "rejected";
+  remarks?: string;
 };
 export type Check = {
   name: string;
@@ -69,6 +83,7 @@ export type Run = {
 };
 export type Audit = {
   id: string;
+  actorId?: string;
   actor: string;
   action: string;
   target: string;

@@ -5,7 +5,7 @@ import Portal from "@/components/portal";
 export const dynamic = "force-dynamic";
 export default async function Page() {
   const cookieStore = await cookies();
-  if (!sessionUser(cookieStore.get("ptat_session")?.value || ""))
+  if (!(await sessionUser(cookieStore.get("ptat_session")?.value || "")))
     redirect("/login");
   return <Portal />;
 }

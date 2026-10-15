@@ -36,7 +36,9 @@ import {
 import type { User, Product, Subscriber, Run, Plan, Audit } from "@/lib/types";
 import { mask } from "@/lib/types";
 import { registry as registryType } from "@/lib/catalog";
-type Workspace = {
+import Enterprise, { type EnterpriseData } from "./enterprise";
+import type { PageName } from "@/lib/contracts";
+type Workspace = EnterpriseData & {
   user: User;
   products: Product[];
   subscribers: Subscriber[];
@@ -45,15 +47,19 @@ type Workspace = {
   registry: typeof registryType;
   mode: string;
 };
-type Page =
-  | "Overview"
-  | "Test runs"
-  | "Test MSISDNs"
-  | "Product catalog"
-  | "API registry"
-  | "Environments"
-  | "Audit trail";
+type Page = PageName;
 const navigation = [
+  {
+    title: "BSS PORTAL",
+    items: [
+      { name: "API portal", icon: Code2 },
+      { name: "Bundle verification", icon: CheckCircle2 },
+      { name: "Subscriber 360", icon: Users },
+      { name: "Product explorer", icon: Layers3 },
+      { name: "Batch Report", icon: FileCheck2 },
+      { name: "AI BSS Assistant", icon: Sparkles },
+    ],
+  },
   {
     title: "WORKSPACE",
     items: [
@@ -69,6 +75,8 @@ const navigation = [
       { name: "API registry", icon: Code2 },
       { name: "Environments", icon: Globe2 },
       { name: "Audit trail", icon: ShieldCheck },
+      { name: "Administration", icon: SlidersHorizontal },
+      { name: "My account", icon: Users },
     ],
   },
 ];
@@ -150,6 +158,10 @@ export default function Portal() {
     void refresh();
   }, []);
   useEffect(() => {
+    if (data && !data.access.pages.includes(page))
+      setPage(data.access.pages[0] || "My account");
+  }, [data, page]);
+  useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 4000);
     return () => clearTimeout(t);
@@ -179,7 +191,7 @@ export default function Portal() {
         )}
       </div>
     );
-  const readOnly = data.user.role === "Auditor";
+  const readOnly = !data.access.permissions.includes("bss.write");
   const results = data.runs.flatMap((r) => r.results);
   const passed = results.filter((r) => r.status === "PASS").length;
   const failures = results.filter((r) => r.status !== "PASS").length;
@@ -298,23 +310,25 @@ export default function Portal() {
           {navigation.map((group) => (
             <div className="nav-group" key={group.title}>
               <div className="nav-label">{group.title}</div>
-              {group.items.map(({ name, icon: Icon }) => (
-                <button
-                  key={name}
-                  className={"nav-item " + (page === name ? "active" : "")}
-                  onClick={() => {
-                    setPage(name as Page);
-                    setSearch("");
-                    setFilter("All results");
-                  }}
-                >
-                  <Icon size={19} />
-                  {name}
-                  {name === "Test runs" && data.runs.length > 0 && (
-                    <span className="nav-count">{data.runs.length}</span>
-                  )}
-                </button>
-              ))}
+              {group.items
+                .filter((item) => data.access.pages.includes(item.name as Page))
+                .map(({ name, icon: Icon }) => (
+                  <button
+                    key={name}
+                    className={"nav-item " + (page === name ? "active" : "")}
+                    onClick={() => {
+                      setPage(name as Page);
+                      setSearch("");
+                      setFilter("All results");
+                    }}
+                  >
+                    <Icon size={19} />
+                    {name}
+                    {name === "Test runs" && data.runs.length > 0 && (
+                      <span className="nav-count">{data.runs.length}</span>
+                    )}
+                  </button>
+                ))}
             </div>
           ))}
         </nav>
@@ -322,8 +336,13 @@ export default function Portal() {
           <div className="workspace-health">
             <span className="health-dot" />
             <div>
-              <b>Simulator connected</b>
-              <small>No live BSS traffic</small>
+              <b>Environment controls</b>
+              <small>
+                {data.environments
+                  .filter((e) => e.enabled)
+                  .map((e) => e.id + ": " + e.mode)
+                  .join(" · ")}
+              </small>
             </div>
           </div>
           <button className="nav-item" onClick={() => setModal("help")}>
@@ -340,7 +359,7 @@ export default function Portal() {
             </div>
             <div>
               <b>{data.user.name}</b>
-              <small>{data.user.role}</small>
+              <small>{data.user.roleName || data.user.role}</small>
             </div>
             <button
               className="icon-button"
@@ -364,7 +383,7 @@ export default function Portal() {
           <div className="top-actions">
             <span className="mode">
               <span />
-              Simulated UAT
+              Governed BSS
             </span>
             <span className="separator" />
             <button
@@ -381,6 +400,16 @@ export default function Portal() {
                 .map((n) => n[0])
                 .join("")}
             </div>
+            <button
+              className="icon-button mobile-signout"
+              aria-label="Sign out"
+              onClick={async () => {
+                await api("auth/logout", {});
+                window.location.href = "/login";
+              }}
+            >
+              <LogOut size={17} />
+            </button>
           </div>
         </header>
         <main className="content">
@@ -389,7 +418,7 @@ export default function Portal() {
               <div className="eyebrow">PRODUCT ASSURANCE WORKSPACE</div>
               <h1>{page === "Overview" ? "Testing overview" : page}</h1>
               <p>
-                {
+                {(
                   {
                     Overview:
                       "A clear view of your product tests, verification, and UAT readiness.",
@@ -404,23 +433,15 @@ export default function Portal() {
                     Environments:
                       "Keep test execution inside a controlled environment.",
                     "Audit trail": "A traceable record of workspace activity.",
-                  }[page]
-                }
+                  } as Partial<Record<Page, string>>
+                )[page] ||
+                  "Configure, execute, and inspect approved BSS operations."}
               </p>
             </div>
             {!readOnly && (page === "Overview" || page === "Test runs") && (
               <button className="button primary" onClick={() => openTest()}>
                 <Plus size={18} />
                 New test run
-              </button>
-            )}
-            {page === "Test MSISDNs" && !readOnly && (
-              <button
-                className="button primary"
-                onClick={() => setModal("subscriber")}
-              >
-                <Plus size={17} />
-                Register MSISDN
               </button>
             )}
           </div>
@@ -432,6 +453,7 @@ export default function Portal() {
               </button>
             </div>
           )}
+          <Enterprise key={page} page={page} data={data} refresh={refresh} />
           {page === "Overview" && (
             <>
               <div className="stats">
@@ -721,172 +743,6 @@ export default function Portal() {
                   </button>
                 </section>
               ))}
-            </div>
-          )}
-          {page === "Test MSISDNs" && (
-            <section className="panel">
-              <div className="info-strip">
-                <ShieldCheck size={17} />
-                Only active MSISDNs owned by you are eligible for execution.
-                Numbers shown here are synthetic.
-              </div>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>MSISDN</th>
-                      <th>SUBSCRIPTION ID</th>
-                      <th>ENVIRONMENT</th>
-                      <th>STATUS</th>
-                      <th>TAGS</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.subscribers.map((s) => (
-                      <tr key={s.id}>
-                        <td>
-                          <b className="mono">{s.msisdn}</b>
-                        </td>
-                        <td className="mono muted">{s.id}</td>
-                        <td>
-                          <span className="env-pill">
-                            <i />
-                            UAT
-                          </span>
-                        </td>
-                        <td>
-                          <Status status={s.status} />
-                        </td>
-                        <td>
-                          {s.tags.map((t) => (
-                            <span className="tag" key={t}>
-                              {t}
-                            </span>
-                          ))}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {!data.subscribers.length && (
-                  <div className="empty">
-                    <Users />
-                    <h3>No subscribers assigned</h3>
-                    <p>
-                      Auditors can inspect reports but cannot own or execute
-                      tests.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-          {page === "API registry" && (
-            <section className="panel">
-              <div className="panel-title">
-                <div>
-                  <h2>BSS operation registry</h2>
-                  <p>Qvantel BSSAPI · November 27, 2019 · JSON:API 1.0</p>
-                </div>
-                <span className="badge amber">SIMULATOR ONLY</span>
-              </div>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>OPERATION</th>
-                      <th>METHOD</th>
-                      <th>REGISTERED PATH</th>
-                      <th>REFERENCE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.registry.map((r) => (
-                      <tr key={r.id}>
-                        <td>
-                          <b>{r.name}</b>
-                        </td>
-                        <td>
-                          <span className={"method " + r.method.toLowerCase()}>
-                            {r.method}
-                          </span>
-                        </td>
-                        <td>
-                          <code>{r.path}</code>
-                        </td>
-                        <td className="muted">{r.section}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="info-strip">
-                <BookOpen size={17} />
-                Paths come from the uploaded documentation. Demo product IDs and
-                entitlement fields are not live contract fixtures.
-              </div>
-            </section>
-          )}
-          {page === "Environments" && (
-            <div className="environment-grid">
-              <section className="panel env-card">
-                <div className="product-top">
-                  <span className="product-icon">
-                    <Globe2 size={24} />
-                  </span>
-                  <span className="status active">
-                    <CheckCircle2 size={13} />
-                    Available
-                  </span>
-                </div>
-                <h2>UAT sandbox</h2>
-                <p className="muted">
-                  An isolated, deterministic BSS simulation.
-                </p>
-                <div className="entitlements">
-                  <div>
-                    <span>Adapter</span>
-                    <b>Simulated BSS</b>
-                  </div>
-                  <div>
-                    <span>Execution policy</span>
-                    <b>Owned MSISDNs only</b>
-                  </div>
-                  <div>
-                    <span>Max batch size</span>
-                    <b>50 subscribers</b>
-                  </div>
-                  <div>
-                    <span>Purchase retries</span>
-                    <b>Disabled</b>
-                  </div>
-                  <div>
-                    <span>Persistence</span>
-                    <b>Local SQLite</b>
-                  </div>
-                </div>
-                <div className="info-strip">
-                  <ShieldCheck size={16} />
-                  No production endpoint or credentials configured.
-                </div>
-              </section>
-              <section className="panel env-card">
-                <span className="badge neutral">INTEGRATION CHECKLIST</span>
-                <h2>Connect your enterprise UAT</h2>
-                <p className="muted">
-                  Required before enabling real BSS execution.
-                </p>
-                <ol className="checklist">
-                  <li>Confirm current API version and deployed schemas.</li>
-                  <li>Approve the UAT base URL and TLS trust.</li>
-                  <li>
-                    Configure scoped credentials through a secret manager.
-                  </li>
-                  <li>Map subscriptions, charging units, and entitlements.</li>
-                  <li>Implement bounded polling and reconciliation.</li>
-                  <li>Run contract tests, SSO and security review.</li>
-                </ol>
-              </section>
             </div>
           )}
           {page === "Audit trail" && (
@@ -1288,7 +1144,14 @@ function TestModal({
   const [productId, setProduct] = useState("P123");
   const [ids, setIds] = useState<string[]>(
     data.subscribers
-      .filter((s) => s.status === "Active")
+      .filter(
+        (s) =>
+          s.status === "Active" &&
+          s.enabled !== false &&
+          s.approval !== "pending" &&
+          s.approval !== "rejected" &&
+          s.environment !== "Production",
+      )
       .slice(0, 2)
       .map((s) => s.id),
   );
@@ -1296,7 +1159,14 @@ function TestModal({
   const [prompt, setPrompt] = useState(
     "Purchase P123 for " +
       data.subscribers
-        .filter((s) => s.status === "Active")
+        .filter(
+          (s) =>
+            s.status === "Active" &&
+            s.enabled !== false &&
+            s.approval !== "pending" &&
+            s.approval !== "rejected" &&
+            s.environment !== "Production",
+        )
         .slice(0, 2)
         .map((s) => s.msisdn)
         .join(" and ") +
@@ -1430,7 +1300,13 @@ function TestModal({
                       <input
                         type="checkbox"
                         checked={ids.includes(s.id)}
-                        disabled={s.status !== "Active"}
+                        disabled={
+                          s.status !== "Active" ||
+                          s.enabled === false ||
+                          s.approval === "pending" ||
+                          s.approval === "rejected" ||
+                          s.environment === "Production"
+                        }
                         onChange={(e) =>
                           setIds(
                             e.target.checked
@@ -1462,7 +1338,12 @@ function TestModal({
                       const numbers = text.match(/\b01\d{9}\b/g) || [];
                       const unique = [...new Set(numbers)];
                       const eligible = data.subscribers.filter(
-                        (s) => s.status === "Active",
+                        (s) =>
+                          s.status === "Active" &&
+                          s.enabled !== false &&
+                          s.approval !== "pending" &&
+                          s.approval !== "rejected" &&
+                          s.environment !== "Production",
                       );
                       const matched = unique.map(
                         (n) => eligible.find((s) => s.msisdn === n)?.id,

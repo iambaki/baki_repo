@@ -55,7 +55,7 @@ const ownership = await request(
   { ...make, subscriberIds: ["1004"] },
   cookie,
 );
-equal(ownership.response.status, 400);
+equal(ownership.response.status, 403);
 const p = await request("plans", make, cookie);
 equal(p.response.status, 201);
 const executed = await request(`plans/${p.data.plan.id}/execute`, {}, cookie);
@@ -101,7 +101,7 @@ const auditorCookie = auditorLogin.response.headers
   .get("set-cookie")
   .split(";")[0];
 const readonly = await request("plans", make, auditorCookie);
-equal(readonly.response.status, 400);
+equal(readonly.response.status, 403);
 const testerLogin = await request("auth/login", {
   email: "tester@ptat.local",
   password,

@@ -1,160 +1,269 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  db,
-  authenticate,
-  sessionUser,
   get,
   save,
   list,
   audit,
   allSubscribers,
+  authenticate,
+  sessionUser,
+  createSession,
+  endSession,
+  transaction,
+  query,
+  users,
 } from "@/lib/db";
 import { products, registry } from "@/lib/catalog";
 import { validatePlan, executePlan, parsePrompt } from "@/lib/engine";
-import type { Plan, Run, Audit, Subscriber } from "@/lib/types";
+import { publicApi, extendedApi } from "@/lib/portal-api";
+import {
+  requirePage,
+  requirePermission,
+  visibleSubscribers,
+  settings,
+  access,
+  environmentId,
+  assertSubscriber,
+  getEnvironment,
+  HttpError,
+} from "@/lib/policy";
+import { manage } from "@/lib/management";
+import { runtimeConfig } from "@/lib/config";
+import type { Plan, Run, Audit } from "@/lib/types";
+import type { Operation, Environment } from "@/lib/contracts";
 export const runtime = "nodejs";
-function csv(value: unknown) {
-  const s = String(value ?? "");
-  const safe = /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
-  return '"' + safe.replaceAll('"', '""') + '"';
-}
+const csv = (v: unknown) => {
+  const s = String(v ?? "");
+  return (
+    '"' + (/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replaceAll('"', '""') + '"'
+  );
+};
 async function handler(req: NextRequest) {
   try {
-    const path = req.nextUrl.pathname.replace("/api/", "");
-    const method = req.method;
+    const path = req.nextUrl.pathname.replace("/api/", ""),
+      method = req.method;
+    let body: unknown;
     if (method !== "GET") {
-      const origin = req.headers.get("origin");
-      const expectedOrigin =
+      const expected =
         process.env.PTAT_PUBLIC_ORIGIN ||
         `${req.nextUrl.protocol}//${req.headers.get("host")}`;
-      if (!origin || origin !== expectedOrigin)
-        return NextResponse.json(
-          { error: "Invalid request origin." },
-          { status: 403 },
-        );
-      if (Number(req.headers.get("content-length") || 0) > 65536)
-        return NextResponse.json(
-          { error: "Request too large." },
-          { status: 413 },
-        );
+      if (req.headers.get("origin") !== expected)
+        throw new HttpError(403, "Invalid request origin.");
+      if (
+        Number(req.headers.get("content-length") || 0) >
+        runtimeConfig.maxBodyBytes
+      )
+        throw new HttpError(413, "Request too large.");
+      const reader = req.body?.getReader();
+      let size = 0;
+      const parts: Uint8Array[] = [];
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > runtimeConfig.maxBodyBytes) {
+            await reader.cancel();
+            throw new HttpError(413, "Request too large.");
+          }
+          parts.push(value);
+        }
+      }
+      try {
+        body = JSON.parse(Buffer.concat(parts).toString("utf8") || "{}");
+      } catch {
+        throw new HttpError(400, "Invalid JSON request.");
+      }
     }
+    if (
+      method === "POST" &&
+      ["auth/register", "auth/recover", "auth/reset"].includes(path)
+    )
+      return await publicApi(path, body);
     if (path === "auth/login" && method === "POST") {
-      const body = z
+      const b = z
         .object({
-          email: z.string().email().max(100),
+          email: z.string().email().max(150),
           password: z.string().min(1).max(200),
         })
-        .parse(await req.json());
-      const user = authenticate(body.email.toLowerCase(), body.password);
-      if (!user)
-        return NextResponse.json(
-          { error: "Email or password is incorrect." },
-          { status: 401 },
-        );
-      const token = randomBytes(32).toString("hex");
-      db.prepare("DELETE FROM sessions WHERE expires<?").run(Date.now());
-      db.prepare("INSERT INTO sessions VALUES (?,?,?)").run(
-        token,
-        user.id,
-        Date.now() + 8 * 3600000,
-      );
-      audit(user, "Signed in", "UAT workspace");
+        .strict()
+        .parse(body);
+      const user = await authenticate(b.email.toLowerCase(), b.password);
+      if (!user) throw new HttpError(401, "Email or password is incorrect.");
+      const c = await settings();
+      const token = await createSession(user, c.sessionHours);
+      await audit(user, "Signed in", "Workspace");
       const response = NextResponse.json({ user });
       response.cookies.set("ptat_session", token, {
         httpOnly: true,
         sameSite: "strict",
         secure: process.env.PTAT_SECURE_COOKIES === "true",
         path: "/",
-        maxAge: 8 * 3600,
+        maxAge: c.sessionHours * 3600,
       });
       return response;
     }
     const token = req.cookies.get("ptat_session")?.value || "";
-    const user = sessionUser(token);
-    if (!user)
-      return NextResponse.json({ error: "Please sign in." }, { status: 401 });
+    const user = await sessionUser(token);
+    if (!user) throw new HttpError(401, "Please sign in.");
     if (path === "auth/logout" && method === "POST") {
-      db.prepare("DELETE FROM sessions WHERE token=?").run(token);
-      const response = NextResponse.json({ ok: true });
-      response.cookies.delete("ptat_session");
-      return response;
+      await endSession(token);
+      const r = NextResponse.json({ ok: true });
+      r.cookies.delete("ptat_session");
+      return r;
     }
-    const visibleRuns = () =>
-      list<Run>("run").filter(
-        (r) => user.role !== "Tester" || r.createdBy === user.id,
+    const extended = await extendedApi(user, path, method, body);
+    if (extended) return extended;
+    const rights = await access(user),
+      c = await settings();
+    const visibleRuns = async () =>
+      (await list<Run>("run")).filter(
+        (r) =>
+          rights.permissions.includes("reports.all") || r.createdBy === user.id,
       );
-    if (path === "workspace" && method === "GET")
+    if (path === "workspace" && method === "GET") {
+      const all = await allSubscribers();
       return NextResponse.json({
-        user,
-        products,
-        registry,
-        subscribers: allSubscribers().filter((s) => s.owner === user.id),
-        runs: visibleRuns(),
-        audit: list<Audit>("audit")
-          .filter((a) => user.role !== "Tester" || a.actor === user.name)
-          .slice(0, 100),
+        user: {
+          ...user,
+          roleName:
+            (await get<{ name: string }>("role", user.role))?.name || user.role,
+        },
+        products:
+          rights.pages.includes("Product catalog") ||
+          rights.pages.includes("Test runs")
+            ? products
+            : [],
+        registry: rights.pages.includes("API registry") ? registry : [],
+        subscribers: rights.pages.includes("Test MSISDNs")
+          ? await visibleSubscribers(user, all)
+          : [],
+        runs: rights.pages.includes("Test runs") ? await visibleRuns() : [],
+        audit: rights.pages.includes("Audit trail")
+          ? (await list<Audit>("audit"))
+              .filter(
+                (a) =>
+                  rights.permissions.includes("reports.all") ||
+                  a.actorId === user.id,
+              )
+              .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+              .slice(0, 100)
+          : [],
         mode: "SIMULATED",
+        access: rights,
+        operations: await list<Operation>("operation"),
+        environments: await list<Environment>("environment"),
+        settings: c,
+        directory: (await users())
+          .filter((u) => u.status === "active")
+          .map((u) => ({ id: u.id, name: u.name, email: u.email })),
+        storage: runtimeConfig.driver,
       });
+    }
     if (path === "subscribers" && method === "POST") {
-      if (user.role === "Auditor")
-        return NextResponse.json({ error: "Read-only role." }, { status: 403 });
-      const body = z
+      await requirePage(user, "Test MSISDNs");
+      const b = z
         .object({
           msisdn: z.string().regex(/^01\d{9}$/),
-          tags: z.array(z.string().trim().min(1).max(30)).max(5).default([]),
+          tags: z.array(z.string()).optional(),
         })
-        .strict()
-        .parse(await req.json());
-      if (allSubscribers().some((s) => s.msisdn === body.msisdn))
-        throw new Error("MSISDN is already registered.");
-      const s: Subscriber = {
-        ...body,
-        id: randomUUID(),
-        owner: user.id,
-        environment: "UAT",
-        status: "Active",
-      };
-      save("subscriber", s.id, s);
-      audit(user, "Registered test MSISDN", s.id);
+        .parse(body);
+      const s = await manage(user, {
+        type: "subscriber.save",
+        payload: {
+          name: b.msisdn,
+          msisdn: b.msisdn,
+          subscriptionId: b.msisdn,
+          environment: "Test",
+          tags: b.tags || [],
+        },
+      });
       return NextResponse.json({ subscriber: s }, { status: 201 });
     }
     if (path === "plans" && method === "POST") {
-      const body = await req.json();
+      await requirePage(user, "Test runs");
+      await requirePermission(user, "bss.write");
+      await requirePermission(user, "bss.read");
+      if ((await getEnvironment("Test")).mode !== "simulated")
+        throw new HttpError(
+          400,
+          "Legacy purchase scenarios are simulator-only. Use the BSS API portal or assistant for live requests.",
+        );
+      const all = await allSubscribers();
+      const b = body as { prompt?: string; subscriberIds?: string[] };
       const input =
-        typeof body.prompt === "string"
-          ? parsePrompt(body.prompt, allSubscribers())
-          : body;
-      const plan = validatePlan(input, user, allSubscribers());
-      save("plan", plan.id, plan);
-      audit(user, "Created validated plan", plan.id);
+        typeof b.prompt === "string" ? parsePrompt(b.prompt, all) : body;
+      const targetIds =
+        (input as { subscriberIds: string[] }).subscriberIds || [];
+      if (targetIds.length > c.maxBatchSize)
+        throw new HttpError(400, "Configured batch limit exceeded.");
+      for (const id of targetIds)
+        assertSubscriber(
+          user,
+          all.find((s) => s.id === id),
+          "Test",
+          c.sharingEnabled,
+        );
+      const compatibility = all.map((s) => ({
+        ...s,
+        owner: user.id,
+        environment: "UAT" as const,
+      }));
+      const plan = validatePlan(input, user, compatibility);
+      await save("plan", plan.id, plan);
+      await audit(user, "Created validated plan", plan.id);
       return NextResponse.json({ plan }, { status: 201 });
     }
     const execute = path.match(/^plans\/([^/]+)\/execute$/);
     if (execute && method === "POST") {
-      const plan = get<Plan>("plan", execute[1]);
-      if (!plan)
-        return NextResponse.json({ error: "Plan not found." }, { status: 404 });
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const run = executePlan(plan, user, allSubscribers());
-        save("run", run.id, run);
-        save("plan", plan.id, { ...plan, status: "EXECUTED" });
-        audit(user, "Executed simulated purchase plan", run.id);
-        db.exec("COMMIT");
-        return NextResponse.json({ run }, { status: 201 });
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      await requirePage(user, "Test runs");
+      await requirePermission(user, "bss.write");
+      await requirePermission(user, "bss.read");
+      const env = await getEnvironment("Test");
+      if (env.mode !== "simulated" || !env.writesEnabled)
+        throw new HttpError(
+          403,
+          "Legacy scenarios require enabled simulator writes.",
+        );
+      const run = await transaction(async () => {
+        if (runtimeConfig.driver === "mysql")
+          await query(
+            "SELECT id FROM documents WHERE kind='plan' AND id=? FOR UPDATE",
+            [execute[1]],
+          );
+        const plan = await get<Plan>("plan", execute[1]);
+        if (!plan) throw new HttpError(404, "Plan not found.");
+        const all = await allSubscribers();
+        for (const id of plan.subscriberIds)
+          assertSubscriber(
+            user,
+            all.find((s) => s.id === id),
+            "Test",
+            c.sharingEnabled,
+          );
+        const r = executePlan(
+          plan,
+          user,
+          all.map((s) => ({
+            ...s,
+            owner: user.id,
+            environment: "UAT" as const,
+          })),
+        );
+        await save("run", r.id, r);
+        await save("plan", plan.id, { ...plan, status: "EXECUTED" });
+        await audit(user, "Executed simulated purchase plan", r.id);
+        return r;
+      });
+      return NextResponse.json({ run }, { status: 201 });
     }
     const report = path.match(/^runs\/([^/]+)\/report$/);
     if (report && method === "GET") {
-      const run = visibleRuns().find((r) => r.id === report[1]);
-      if (!run)
-        return NextResponse.json({ error: "Run not found." }, { status: 404 });
-      audit(user, "Exported UAT report", run.id);
+      await requirePage(user, "Test runs");
+      const run = (await visibleRuns()).find((r) => r.id === report[1]);
+      if (!run) throw new HttpError(404, "Run not found.");
+      await audit(user, "Exported UAT report", run.id);
       const rows = [
         [
           "Run",
@@ -169,16 +278,16 @@ async function handler(req: NextRequest) {
         ],
         ...run.results.flatMap((r) =>
           r.checks.length
-            ? r.checks.map((c) => [
+            ? r.checks.map((v) => [
                 run.id,
                 "SIMULATED",
                 "UAT",
                 r.msisdn,
                 r.status,
-                c.name,
-                c.expected,
-                c.actual,
-                c.passed ? "PASS" : "FAIL",
+                v.name,
+                v.expected,
+                v.actual,
+                v.passed ? "PASS" : "FAIL",
               ])
             : [
                 [
@@ -196,7 +305,7 @@ async function handler(req: NextRequest) {
         ),
       ];
       return new NextResponse(
-        rows.map((row) => row.map(csv).join(",")).join("\r\n"),
+        rows.map((r) => r.map(csv).join(",")).join("\r\n"),
         {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
@@ -206,20 +315,29 @@ async function handler(req: NextRequest) {
         },
       );
     }
-    return NextResponse.json({ error: "Endpoint not found." }, { status: 404 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof z.ZodError
-            ? error.issues.map((i) => i.message).join("; ")
-            : error instanceof Error
-              ? error.message
-              : "Request failed.",
-      },
-      { status: 400 },
-    );
+    throw new HttpError(404, "Endpoint not found.");
+  } catch (e) {
+    const status =
+      e instanceof HttpError ? e.status : e instanceof z.ZodError ? 400 : 400;
+    const message =
+      e instanceof z.ZodError
+        ? e.issues.map((i) => i.message).join("; ")
+        : e instanceof Error
+          ? e.message
+          : "Request failed.";
+    const sanitized =
+      /password.*access denied|connect ECONN|ER_ACCESS_DENIED|Unknown database/i.test(
+        message,
+      )
+        ? "Database connection unavailable. Check server configuration."
+        : message;
+    return NextResponse.json({ error: sanitized }, { status });
   }
 }
-export const GET = handler;
-export const POST = handler;
+async function privateResponse(req: NextRequest) {
+  const response = await handler(req);
+  if (response) response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+export const GET = privateResponse;
+export const POST = privateResponse;

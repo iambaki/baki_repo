@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./enterprise.css";
 export const metadata: Metadata = {
   title: "PTAT · Product Testing & Verification",
   description:

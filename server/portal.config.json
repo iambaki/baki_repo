@@ -1,0 +1,5 @@
+{
+  "port": 3000,
+  "database": { "driver": "mysql" },
+  "maxBodyBytes": 262144
+}
